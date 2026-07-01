@@ -1168,19 +1168,44 @@ def delete_connection(current_user_email):
 @app.route("/api/user/news", methods=["POST"])
 @token_required
 def add_user_news(current_user_email):
-    """Store a news item (title, description, created_at) for a specific user email."""
+    """Store a news item with main title, thumbnail title, description, and tags."""
     data = request.get_json(silent=True) or {}
 
     target_email = normalize_email(data.get("email"))
-    title = (data.get("title") or "").strip()
+    main_title = (
+        data.get("mainTitle")
+        or data.get("maintitle")
+        or data.get("main_title")
+        or data.get("title")
+        or ""
+    ).strip()
+    thumbnail_title = (
+        data.get("thumbnailTitle")
+        or data.get("thumbailtitle")
+        or data.get("thumbnailtitle")
+        or data.get("thumbnail_title")
+        or ""
+    ).strip()
     description = (data.get("description") or "").strip()
+    raw_tags = data.get("tags", [])
 
-    if not target_email or not title or not description:
-        return jsonify({"error": "email, title and description are required"}), 400
+    if isinstance(raw_tags, str):
+        tags = [tag.strip() for tag in raw_tags.split(",") if tag.strip()]
+    elif isinstance(raw_tags, (list, tuple)):
+        tags = [str(tag).strip() for tag in raw_tags if str(tag).strip()]
+    else:
+        tags = []
+
+    if not target_email or not main_title or not thumbnail_title or not description:
+        return jsonify({
+            "error": "email, mainTitle, thumbnailTitle and description are required"
+        }), 400
 
     news_item = {
-        "title": title,
+        "mainTitle": main_title,
+        "thumbnailTitle": thumbnail_title,
         "description": description,
+        "tags": tags,
         "created_at": datetime.datetime.utcnow()
     }
 
@@ -1218,6 +1243,59 @@ def add_user_news(current_user_email):
         "email": target_email,
         "news": response_news
     }), 201
+
+
+@app.route("/api/user/news", methods=["GET"])
+@token_required
+def get_user_news(current_user_email):
+    """Fetch news items for the authenticated user."""
+    current_user_email = normalize_email(current_user_email)
+
+    # 1) Flat user document style
+    flat_user = users_collection.find_one({"email": current_user_email}) or {}
+    flat_news = flat_user.get("news", []) if flat_user else []
+
+    if flat_news:
+        serialized_news = []
+        for item in flat_news:
+            item_copy = item.copy() if isinstance(item, dict) else {"value": item}
+            created_at = item_copy.get("created_at")
+            if created_at and hasattr(created_at, "isoformat"):
+                item_copy["created_at"] = created_at.isoformat() + "Z"
+            serialized_news.append(item_copy)
+
+        return jsonify({
+            "email": current_user_email,
+            "count": len(serialized_news),
+            "news": serialized_news,
+        }), 200
+
+    # 2) Legacy batch-based users document style
+    users_doc = users_collection.find_one({"_id": "users"})
+    if not users_doc or not users_doc.get("batches"):
+        return jsonify({"email": current_user_email, "count": 0, "news": []}), 200
+
+    for batch in users_doc.get("batches", []):
+        for user in batch.get("users", []):
+            if normalize_email(user.get("email")) == current_user_email:
+                news_items = user.get("news", []) or []
+                serialized_news = []
+
+                for item in news_items:
+                    item_copy = item.copy() if isinstance(item, dict) else {"value": item}
+                    created_at = item_copy.get("created_at")
+                    if created_at and hasattr(created_at, "isoformat"):
+                        item_copy["created_at"] = created_at.isoformat() + "Z"
+                    serialized_news.append(item_copy)
+
+                return jsonify({
+                    "email": current_user_email,
+                    "batch": batch.get("batch_name"),
+                    "count": len(serialized_news),
+                    "news": serialized_news,
+                }), 200
+
+    return jsonify({"email": current_user_email, "count": 0, "news": []}), 200
 
 
 # -----------------------------------------
