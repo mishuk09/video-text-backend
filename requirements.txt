@@ -1,0 +1,11 @@
+Flask
+flask-cors
+pymongo
+PyJWT
+python-dotenv
+pandas
+numpy
+openpyxl
+gunicorn  
+matplotlib
+PyQt5
