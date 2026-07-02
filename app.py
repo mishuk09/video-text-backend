@@ -43,6 +43,8 @@ app.register_blueprint(post_bp, url_prefix="/api")
 ALLOWED_ORIGINS = {
     "https://pressai.info",
     "https://www.pressai.info",
+    "https://studioai.press",
+    "https://www.studioai.press",
     "http://localhost:5173",
 }
 
