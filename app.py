@@ -940,7 +940,8 @@ def register():
 # -----------------------------------------
 # 🔑 SIGNIN ENDPOINT
 # -----------------------------------------
-@app.route("/api/signin", methods=["POST"])
+@app.route("/api/signin", methods=["POST", "OPTIONS"])
+@cross_origin(origins="*", allow_headers=["Content-Type", "Authorization"])
 def signin():
     """User login using email and password"""
     data = request.get_json(silent=True) or {}
