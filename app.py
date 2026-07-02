@@ -40,16 +40,8 @@ app = Flask(__name__)
 
 app.register_blueprint(post_bp, url_prefix="/api")
 
-# ✅ Enable CORS for all origins during local development
-CORS(
-    app,
-    resources={r"/*": {
-        "origins": "*",
-        "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-        "allow_headers": ["Content-Type", "Authorization"],
-    }},
-    supports_credentials=False,
-)
+# ✅ Enable CORS for all origins
+CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=False)
 
 
 @app.after_request
@@ -57,6 +49,7 @@ def add_cors_headers(response):
     response.headers["Access-Control-Allow-Origin"] = "*"
     response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
     response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+    response.headers["Access-Control-Max-Age"] = "86400"
     return response
 
 
@@ -67,6 +60,7 @@ def handle_preflight_request():
         response.headers["Access-Control-Allow-Origin"] = "*"
         response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
         response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+        response.headers["Access-Control-Max-Age"] = "86400"
         return response
 
 
@@ -959,7 +953,6 @@ def register():
 # 🔑 SIGNIN ENDPOINT
 # -----------------------------------------
 @app.route("/api/signin", methods=["POST", "OPTIONS"])
-@cross_origin(origins="*", allow_headers=["Content-Type", "Authorization"])
 def signin():
     """User login using email and password"""
     if request.method == "OPTIONS":
