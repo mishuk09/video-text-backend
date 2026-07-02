@@ -40,13 +40,23 @@ app = Flask(__name__)
 
 app.register_blueprint(post_bp, url_prefix="/api")
 
-# ✅ Enable CORS for all origins
-CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=False)
+ALLOWED_ORIGINS = {
+    "https://pressai.info",
+    "https://www.pressai.info",
+    "http://localhost:5173",
+}
+
+
+# ✅ Enable CORS for approved origins only
+CORS(app, resources={r"/*": {"origins": list(ALLOWED_ORIGINS)}}, supports_credentials=False)
 
 
 @app.after_request
 def add_cors_headers(response):
-    response.headers["Access-Control-Allow-Origin"] = "*"
+    origin = request.headers.get("Origin")
+    if origin in ALLOWED_ORIGINS:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Vary"] = "Origin"
     response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
     response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
     response.headers["Access-Control-Max-Age"] = "86400"
@@ -57,7 +67,10 @@ def add_cors_headers(response):
 def handle_preflight_request():
     if request.method == "OPTIONS":
         response = app.make_default_options_response()
-        response.headers["Access-Control-Allow-Origin"] = "*"
+        origin = request.headers.get("Origin")
+        if origin in ALLOWED_ORIGINS:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Vary"] = "Origin"
         response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
         response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
         response.headers["Access-Control-Max-Age"] = "86400"
