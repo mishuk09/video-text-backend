@@ -4,6 +4,7 @@ import datetime, json
 from functools import wraps
 import jwt
 import os
+import uuid
 from dotenv import load_dotenv
 from bson import ObjectId
 import pandas as pd
@@ -1296,6 +1297,190 @@ def get_user_news(current_user_email):
                 }), 200
 
     return jsonify({"email": current_user_email, "count": 0, "news": []}), 200
+
+
+# -----------------------------------------
+# 📝 USER NOTES
+# -----------------------------------------
+@app.route("/api/user/notes", methods=["POST"])
+@token_required
+def add_user_note(current_user_email):
+    """Store a note with title and description for the authenticated user."""
+    data = request.get_json(silent=True) or {}
+
+    current_user_email = normalize_email(current_user_email)
+    title = (data.get("title") or "").strip()
+    description = (data.get("description") or "").strip()
+
+    if not title or not description:
+        return jsonify({"error": "title and description are required"}), 400
+
+    note_item = {
+        "noteId": uuid.uuid4().hex,
+        "title": title,
+        "description": description,
+        "created_at": datetime.datetime.utcnow()
+    }
+
+    # 1) Flat user document style
+    flat_result = users_collection.update_one(
+        {"email": current_user_email},
+        {"$push": {"notes": note_item}}
+    )
+    if flat_result.modified_count > 0:
+        response_note = note_item.copy()
+        response_note["created_at"] = response_note["created_at"].isoformat() + "Z"
+        return jsonify({
+            "message": "Note saved successfully",
+            "email": current_user_email,
+            "note": response_note
+        }), 201
+
+    # 2) Legacy batch-based users document style
+    legacy_result = users_collection.update_one(
+        {"_id": "users"},
+        {"$push": {"batches.$[batch].users.$[user].notes": note_item}},
+        array_filters=[
+            {"batch.users": {"$exists": True}},
+            {"user.email": current_user_email}
+        ]
+    )
+
+    if legacy_result.modified_count == 0:
+        return jsonify({"error": "User not found"}), 404
+
+    response_note = note_item.copy()
+    response_note["created_at"] = response_note["created_at"].isoformat() + "Z"
+    return jsonify({
+        "message": "Note saved successfully",
+        "email": current_user_email,
+        "note": response_note
+    }), 201
+
+
+@app.route("/api/user/notes", methods=["GET"])
+@token_required
+def get_user_notes(current_user_email):
+    """Fetch notes for the authenticated user."""
+    current_user_email = normalize_email(current_user_email)
+
+    flat_user = users_collection.find_one({"email": current_user_email}) or {}
+    flat_notes = flat_user.get("notes", []) if flat_user else []
+
+    if flat_notes:
+        serialized_notes = []
+        for item in flat_notes:
+            item_copy = item.copy() if isinstance(item, dict) else {"value": item}
+            created_at = item_copy.get("created_at")
+            if created_at and hasattr(created_at, "isoformat"):
+                item_copy["created_at"] = created_at.isoformat() + "Z"
+            serialized_notes.append(item_copy)
+
+        return jsonify({
+            "email": current_user_email,
+            "count": len(serialized_notes),
+            "notes": serialized_notes,
+        }), 200
+
+    users_doc = users_collection.find_one({"_id": "users"})
+    if not users_doc or not users_doc.get("batches"):
+        return jsonify({"email": current_user_email, "count": 0, "notes": []}), 200
+
+    for batch in users_doc.get("batches", []):
+        for user in batch.get("users", []):
+            if normalize_email(user.get("email")) == current_user_email:
+                notes = user.get("notes", []) or []
+                serialized_notes = []
+
+                for item in notes:
+                    item_copy = item.copy() if isinstance(item, dict) else {"value": item}
+                    created_at = item_copy.get("created_at")
+                    if created_at and hasattr(created_at, "isoformat"):
+                        item_copy["created_at"] = created_at.isoformat() + "Z"
+                    serialized_notes.append(item_copy)
+
+                return jsonify({
+                    "email": current_user_email,
+                    "batch": batch.get("batch_name"),
+                    "count": len(serialized_notes),
+                    "notes": serialized_notes,
+                }), 200
+
+    return jsonify({"email": current_user_email, "count": 0, "notes": []}), 200
+
+
+@app.route("/api/user/notes/<note_id>", methods=["PUT"])
+@token_required
+def update_user_note(current_user_email, note_id):
+    """Update a specific note for the authenticated user."""
+    data = request.get_json(silent=True) or {}
+    current_user_email = normalize_email(current_user_email)
+
+    update_data = {}
+    if "title" in data:
+        title = (data.get("title") or "").strip()
+        if not title:
+            return jsonify({"error": "title cannot be empty"}), 400
+        update_data["title"] = title
+
+    if "description" in data:
+        description = (data.get("description") or "").strip()
+        if not description:
+            return jsonify({"error": "description cannot be empty"}), 400
+        update_data["description"] = description
+
+    if not update_data:
+        return jsonify({"error": "No fields to update"}), 400
+
+    flat_result = users_collection.update_one(
+        {"email": current_user_email, "notes.noteId": note_id},
+        {"$set": {f"notes.$.{key}": value for key, value in update_data.items()}}
+    )
+    if flat_result.modified_count > 0:
+        return jsonify({"message": "Note updated successfully", "noteId": note_id}), 200
+
+    legacy_result = users_collection.update_one(
+        {"_id": "users", "batches.users.email": current_user_email, "batches.users.notes.noteId": note_id},
+        {"$set": {f"batches.$[batch].users.$[user].notes.$[note].{key}": value for key, value in update_data.items()}},
+        array_filters=[
+            {"batch.users": {"$exists": True}},
+            {"user.email": current_user_email},
+            {"note.noteId": note_id}
+        ]
+    )
+
+    if legacy_result.modified_count == 0:
+        return jsonify({"error": "Note not found"}), 404
+
+    return jsonify({"message": "Note updated successfully", "noteId": note_id}), 200
+
+
+@app.route("/api/user/notes/<note_id>", methods=["DELETE"])
+@token_required
+def delete_user_note(current_user_email, note_id):
+    """Delete a specific note for the authenticated user."""
+    current_user_email = normalize_email(current_user_email)
+
+    flat_result = users_collection.update_one(
+        {"email": current_user_email},
+        {"$pull": {"notes": {"noteId": note_id}}}
+    )
+    if flat_result.modified_count > 0:
+        return jsonify({"message": "Note deleted successfully", "noteId": note_id}), 200
+
+    legacy_result = users_collection.update_one(
+        {"_id": "users"},
+        {"$pull": {"batches.$[batch].users.$[user].notes": {"noteId": note_id}}},
+        array_filters=[
+            {"batch.users": {"$exists": True}},
+            {"user.email": current_user_email}
+        ]
+    )
+
+    if legacy_result.modified_count == 0:
+        return jsonify({"error": "Note not found"}), 404
+
+    return jsonify({"message": "Note deleted successfully", "noteId": note_id}), 200
 
 
 # -----------------------------------------
