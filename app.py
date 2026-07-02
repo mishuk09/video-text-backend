@@ -149,6 +149,29 @@ def is_admin_email(email):
     return admins_collection.find_one({"email": normalized_email}) is not None
 
 
+def serialize_user_profile(user_doc, batch_name=None):
+    """Return a JSON-safe, sanitized user payload for profile screens."""
+    if not user_doc:
+        return None
+
+    user_copy = dict(user_doc)
+    user_copy.pop("password", None)
+    user_copy.pop("confirmPassword", None)
+
+    if "_id" in user_copy and hasattr(user_copy["_id"], "__str__"):
+        user_copy["_id"] = str(user_copy["_id"])
+
+    for key in ("created_at", "updated_at"):
+        value = user_copy.get(key)
+        if value and hasattr(value, "isoformat"):
+            user_copy[key] = value.isoformat() + "Z"
+
+    if batch_name:
+        user_copy["batch_name"] = batch_name
+
+    return user_copy
+
+
 # -----------------------------------------
 # 🔐 JWT Helper Functions
 # -----------------------------------------
@@ -999,6 +1022,26 @@ def signin():
 
 
 # -----------------------------------------
+# 👤 LOGGED-IN USER PROFILE
+# -----------------------------------------
+@app.route("/api/user/profile", methods=["GET"])
+@token_required
+def get_current_user_profile(current_user_email):
+    """Return the authenticated user's profile data for the UI."""
+    current_user_email = normalize_email(current_user_email)
+
+    flat_user = users_collection.find_one({"email": current_user_email})
+    if flat_user:
+        return jsonify({"user": serialize_user_profile(flat_user)}), 200
+
+    legacy_user, batch_name = find_user_snapshot(current_user_email)
+    if legacy_user:
+        return jsonify({"user": serialize_user_profile(legacy_user, batch_name)}), 200
+
+    return jsonify({"error": "User not found"}), 404
+
+
+# -----------------------------------------
 # 🔁 RESET PASSWORD ENDPOINT
 # -----------------------------------------
 @app.route("/api/reset-password", methods=["POST"])
@@ -1043,31 +1086,9 @@ def reset_password():
 
 
 
-# -----------------------------------------
-# 👤 USER PROFILE ENDPOINT
-# -----------------------------------------
-@app.route("/api/user-profile", methods=["GET"])
-@token_required
-def user_profile(current_user_email):
-    """
-    Fetch the user profile based on the JWT token.
-    """
-    # Get the users document
-    users_doc = users_collection.find_one({"_id": "users"})
-    if not users_doc:
-        return jsonify({"error": "No users found"}), 404
+# User profile fetch end point 
 
-    # Find the user in batches
-    for batch in users_doc["batches"]:
-        for user in batch["users"]:
-            if user["email"] == current_user_email:
-                # Return user data except password for security
-                user_data = user.copy()
-                user_data.pop("password", None)
-                user_data.pop("confirmPassword", None)
-                return jsonify({"user": user_data, "batch": batch["batch_name"]}), 200
 
-    return jsonify({"error": "User not found"}), 404
 
 # -----------------------------------------
 # 👤 USER SURVEY ENDPOINT
